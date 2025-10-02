@@ -1,15 +1,22 @@
 import os, re
 from slack_bolt import App
+from slack_bolt.adapter.flask import SlackRequestHandler
 from slack_sdk import WebClient
+from flask import Flask, request, make_response
 
-# Load from Render Environment Variables
+# Load environment variables
 SLACK_BOT_TOKEN = os.environ["SLACK_BOT_TOKEN"]
 SLACK_SIGNING_SECRET = os.environ["SLACK_SIGNING_SECRET"]
 
-app = App(token=SLACK_BOT_TOKEN, signing_secret=SLACK_SIGNING_SECRET)
+# Initialize Slack app
+bolt_app = App(token=SLACK_BOT_TOKEN, signing_secret=SLACK_SIGNING_SECRET)
 client = WebClient(token=SLACK_BOT_TOKEN)
 
-# Store quiz progress + scores
+# Flask app for Render
+flask_app = Flask(__name__)
+handler = SlackRequestHandler(bolt_app)
+
+# Store quiz state
 user_progress = {}
 user_scores = {}
 
@@ -32,7 +39,7 @@ quiz = [
      "labels": {"1": "Adventuring 🗡️", "2": "Scheming 🐍", "3": "Reading 📚", "4": "Relaxing ☕"}}
 ]
 
-# Replace with your actual channel IDs (from Slack)
+# Replace with your actual Slack channel IDs
 house_channels = {
     "gryffindor": "CXXXXGRYFFINDOR",
     "slytherin": "CXXXXSLYTHERIN",
@@ -40,8 +47,16 @@ house_channels = {
     "hufflepuff": "CXXXXHUFFLEPUFF"
 }
 
-# Command to start quiz
-@app.message("sort me")
+# ✅ Route for Slack Event Subscription verification
+@flask_app.route("/slack/events", methods=["POST"])
+def slack_events():
+    if request.json and "challenge" in request.json:
+        return make_response(request.json["challenge"], 200, {"content_type": "application/json"})
+    return handler.handle(request)
+
+# --- QUIZ LOGIC ---
+
+@bolt_app.message("sort me")
 def start_quiz(message, say):
     user = message['user']
     user_progress[user] = 0
@@ -49,15 +64,13 @@ def start_quiz(message, say):
     say(f"🎩 Welcome <@{user}>! The Sorting Hat quiz begins...")
     ask_question(user, say)
 
-# Ask a question
 def ask_question(user, say):
     idx = user_progress[user]
     q = quiz[idx]
     options = "\n".join([f"{k}. {v}" for k,v in q["labels"].items()])
     say(f"*Q{idx+1}:* {q['q']}\n{options}\n👉 Reply with 1, 2, 3, or 4")
 
-# Record answers
-@app.message(re.compile("^[1-4]$"))
+@bolt_app.message(re.compile("^[1-4]$"))
 def record_answer(message, say, context):
     user = message['user']
     if user not in user_progress: return
@@ -68,14 +81,12 @@ def record_answer(message, say, context):
     house = q["options"][choice]
     user_scores[user][house] += 1
 
-    # Next or finish
     if idx + 1 < len(quiz):
         user_progress[user] += 1
         ask_question(user, say)
     else:
         finish_quiz(user, say)
 
-# Finish scoring
 def finish_quiz(user, say):
     scores = user_scores[user]
     top = max(scores.values())
@@ -88,8 +99,7 @@ def finish_quiz(user, say):
         say(f"🎩 Hmm… tough choice! You fit both *{choices}*.\n👉 Type the house name you choose.")
         user_progress[user] = "tie:" + ",".join(top_houses)
 
-# Tie-break handling
-@app.message(re.compile("gryffindor|slytherin|ravenclaw|hufflepuff", re.I))
+@bolt_app.message(re.compile("gryffindor|slytherin|ravenclaw|hufflepuff", re.I))
 def tie_break(message, say, context):
     user = message['user']
     if isinstance(user_progress.get(user), str) and user_progress[user].startswith("tie:"):
@@ -97,7 +107,6 @@ def tie_break(message, say, context):
         if choice in user_progress[user]:
             assign_house(user, choice, say)
 
-# Assign final house
 def assign_house(user, house, say):
     say(f"🎩 The Sorting Hat has spoken: <@{user}> is in *{house.title()}*! 🦁🐍🦅🦡")
     try:
@@ -107,6 +116,6 @@ def assign_house(user, house, say):
     user_progress.pop(user, None)
     user_scores.pop(user, None)
 
-# Render entry point
+# Run Flask on Render
 if __name__ == "__main__":
-    app.start(port=int(os.environ.get("PORT", 3000)))
+    flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 3000)))

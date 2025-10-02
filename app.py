@@ -125,13 +125,22 @@ import os
 from flask import Flask, request, make_response
 
 flask_app = Flask(__name__)
-
 @flask_app.route("/slack/events", methods=["POST"])
 def slack_events():
-    # Respond to Slack URL verification challenge
-    if request.json and "challenge" in request.json:
-        return make_response(request.json["challenge"], 200, {"content_type": "application/json"})
-    return make_response("Event received", 200)
+    data = request.json
+
+    # Respond immediately to Slack
+    if "challenge" in data:  # URL verification
+        return make_response(data["challenge"], 200, {"content_type": "text/plain"})
+
+    # Acknowledge immediately
+    from threading import Thread
+    def process_event(data):
+        handler.handle(request)  # let Bolt handle it in background
+
+    Thread(target=process_event, args=(data,)).start()
+    return make_response("", 200)
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))  # Render assigns the port
     flask_app.run(host="0.0.0.0", port=port)

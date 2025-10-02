@@ -132,6 +132,7 @@ def slack_events():
     if request.json and "challenge" in request.json:
         return make_response(request.json["challenge"], 200, {"content_type": "application/json"})
     return make_response("Event received", 200)
-
 if __name__ == "__main__":
-    flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 3000)))
+    port = int(os.environ.get("PORT", 10000))  # Render assigns the port
+    flask_app.run(host="0.0.0.0", port=port)
+
